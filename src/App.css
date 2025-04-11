@@ -847,3 +847,84 @@ body {
        font-size: 0.8rem;
     }
 }
+.property-detail .demographics-section .demographics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px; /* Add space below header */
+  padding-bottom: 10px;
+  border-bottom: 2px solid #007bff; /* Match detail section heading border */
+}
+.property-detail .demographics-section .demographics-header h3 {
+  border-bottom: none; /* Remove default h3 border */
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+
+.expand-collapse-controls button {
+  background: none;
+  border: 1px solid #ced4da;
+  padding: 5px 10px;
+  margin-left: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #495057;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+.expand-collapse-controls button:hover {
+  background-color: #e9ecef;
+  border-color: #adb5bd;
+}
+.expand-collapse-controls button svg {
+  margin-right: 5px;
+}
+
+
+.demographic-card .card-header.clickable {
+  cursor: pointer; /* Indicate clickable header */
+  transition: background-color 0.2s ease;
+}
+.demographic-card .card-header.clickable:hover {
+  background-color: #eef4fc; /* Slight hover effect */
+}
+
+
+.demographic-card .card-header .toggle-icon {
+  margin-left: auto; /* Push icon to the right */
+  font-size: 1rem;
+  color: #6c757d; /* Subdued color */
+  transition: transform 0.3s ease; /* Smooth rotation */
+}
+
+.demographic-card.collapsed .card-header .toggle-icon {
+  transform: rotate(-90deg); /* Point down when collapsed */
+}
+
+
+/* Style the card content area for transitions */
+.demographic-card .card-content {
+  padding: 0px 15px; /* Remove top/bottom padding initially */
+  max-height: 1000px; /* Set a large max-height for expanded state */
+  overflow: hidden;
+  transition: max-height 0.4s ease-in-out, padding 0.4s ease-in-out; /* Smooth transition */
+  /* display: flex;  Keep flex properties */
+  /* flex-direction: column; */
+  /* gap: 20px; */
+}
+
+.demographic-card.collapsed .card-content {
+  max-height: 0; /* Collapse the content */
+  padding-top: 0;
+  padding-bottom: 0;
+  /* Optionally add border/margin adjustments when collapsed */
+  /* border-top: none; */
+  /* margin-top: -1px; */ /* Overlap border */
+}
+
+/* Add padding back when expanded */
+.demographic-card:not(.collapsed) .card-content {
+  padding-top: 15px;
+  padding-bottom: 15px;
+}

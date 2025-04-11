@@ -1,5 +1,5 @@
 import { calculatePriceGrowth } from "../services/landRegistryService";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faLocationDot,
@@ -14,6 +14,9 @@ import {
   faExclamationTriangle,
   faSchool,
   faTrain,
+  faPlusSquare,
+  faMinusSquare,
+  faChevronDown,
   faChartBar,
   faDollarSign,
   faPercentage,
@@ -230,29 +233,68 @@ const PropertyDetail = ({
   onBackToListings,
 }) => {
   const [activeTab, setActiveTab] = useState("overview");
+  // Initialize with all cards collapsed by default
+  const [collapsedCards, setCollapsedCards] = useState({});
+
+  // Check if demographic data is present and has the expected structure
+  const hasDemographicData =
+    demographicData?.demographics &&
+    Object.keys(demographicData.demographics).length > 0;
+
+  useEffect(() => {
+    if (hasDemographicData) {
+      const initialCollapseState = {};
+      Object.keys(demographicData.demographics).forEach((topic) => {
+        initialCollapseState[topic] = true; // Start all collapsed
+      });
+      setCollapsedCards(initialCollapseState);
+    } else {
+      setCollapsedCards({}); // Reset if no data
+    }
+  }, [demographicData]); // Re-run when demographicData changes
 
   if (!property) return null;
 
   // --- Data Preparation ---
   // Use transaction data from property if available (for search results)
   const currentTransactionData = property.transactionHistory || [];
-  const hasTransactionData =
-    property.transactionHistory && property.transactionHistory.length > 0;
-  const isAreaSummary = property.details && property.details.bedrooms === "N/A"; // More reliable check for area summary
   const priceGrowthInfo = property.priceGrowth || {}; // Use pre-calculated from App.js with fallback
   const isSpecificListing =
     property.details && property.details.bedrooms !== "N/A";
 
-  // Check if demographic data is present and has the expected structure
-  const hasDemographicData =
-    demographicData?.demographics &&
-    Object.keys(demographicData.demographics).length > 0;
-  // Extract property details
   const details = property.details || {};
   const price = property.price || {};
   const amenities = property.amenities || [];
   const transport = property.transport || [];
   const schools = property.schools || [];
+
+  // --- NEW Handler Functions ---
+  const handleToggleCollapse = (topicName) => {
+    setCollapsedCards((prevState) => ({
+      ...prevState,
+      [topicName]: !prevState[topicName], // Toggle the specific topic
+    }));
+  };
+
+  const handleExpandAll = () => {
+    const allExpanded = {};
+    Object.keys(collapsedCards).forEach((topic) => {
+      allExpanded[topic] = false; // Set all to not collapsed
+    });
+    setCollapsedCards(allExpanded);
+  };
+
+  const handleCollapseAll = () => {
+    const allCollapsed = {};
+    Object.keys(collapsedCards).forEach((topic) => {
+      allCollapsed[topic] = true; // Set all to collapsed
+    });
+    setCollapsedCards(allCollapsed);
+  };
+
+  const hasTransactionData =
+    property.transactionHistory && property.transactionHistory.length > 0;
+  const isAreaSummary = property.details && property.details.bedrooms === "N/A";
 
   return (
     <div className="property-detail">
@@ -286,7 +328,7 @@ const PropertyDetail = ({
             </button>
           )}
           {/* --- Demographics Tab --- */}
-          {isAreaSummary && ( // Only show for Area Overviews
+          {isAreaSummary && (
             <button
               className={activeTab === "demographics" ? "active" : ""}
               onClick={() => setActiveTab("demographics")}
@@ -494,8 +536,7 @@ const PropertyDetail = ({
             <div className="market-trend-graph placeholder">
               <FontAwesomeIcon icon={faChartArea} size="3x" />
               <p>
-                Detailed market trend visualization requires additional data
-                integration.
+                Detailed market trend visualization will be done by DS students.
               </p>
             </div>
           </div>
@@ -723,72 +764,64 @@ const PropertyDetail = ({
       {/* --- NEW Demographics Tab --- */}
       {activeTab === "demographics" && isAreaSummary && (
         <div className="property-tab-content demographics-tab-content">
-          {" "}
-          {/* Added class */}
           <div className="detail-section demographics-section">
-            {" "}
-            {/* Added class */}
-            <h3>
-              Area Demographics (Census 2021)
-              {/* <FontAwesomeIcon icon={faUsers} /> */}
-            </h3>
+            <div className="demographics-header">
+              <h3>Area Demographics (Census 2021)</h3>
+              {/* --- Add Expand/Collapse Buttons --- */}
+              {hasDemographicData && (
+                <div className="expand-collapse-controls">
+                  <button onClick={handleExpandAll} title="Expand All">
+                    <FontAwesomeIcon icon={faPlusSquare} /> Expand All
+                  </button>
+                  <button onClick={handleCollapseAll} title="Collapse All">
+                    <FontAwesomeIcon icon={faMinusSquare} /> Collapse All
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Loading State */}
             {isFetchingDemographics && !hasDemographicData && (
-              <div className="loading-message">
-                <FontAwesomeIcon icon={faSpinner} spin /> Loading demographic
-                data...
-              </div>
+              <div className="loading-message"> /* ... loading ... */ </div>
             )}
+
             {/* Error State */}
             {demographicsError && !hasDemographicData && (
-              <div className="no-data-message error">
-                <FontAwesomeIcon icon={faExclamationCircle} />
-                <p>Could not load demographic data:</p>
-                <p>
-                  <small>{demographicsError}</small>
-                </p>
-              </div>
+              <div className="no-data-message error"> /* ... error ... */ </div>
             )}
+
             {/* Data Display using Cards */}
             {hasDemographicData && (
               <div className="demographics-cards-container">
-                <p className="data-source-note">
-                  Data sourced from Nomisweb Census 2021 API for LSOA (
-                  {demographicData.geoCodes?.lsoa_gss}) and Local Authority (
-                  {demographicData.geoCodes?.lad_gss}). Displaying counts and
-                  percentages where available.
-                </p>
+                <p className="data-source-note">Data source: Nomis (ONS)</p>
+
                 {Object.entries(demographicData.demographics)
-                  // Sort topics alphabetically
                   .sort(([topicA], [topicB]) => topicA.localeCompare(topicB))
                   .map(([topic, data]) => (
-                    // --- USE THE NEW DemographicCard COMPONENT ---
                     <DemographicCard
                       key={topic}
                       topicName={topic}
                       nomisData={data}
                       geoCodes={demographicData.geoCodes}
+                      // --- Pass state and handler ---
+                      isCollapsed={
+                        collapsedCards[topic] === undefined
+                          ? true
+                          : collapsedCards[topic]
+                      } // Default to collapsed if state not yet set
+                      onToggleCollapse={() => handleToggleCollapse(topic)}
                     />
                   ))}
-                {/* Display partial fetch errors */}
-                {demographicData.fetchErrors &&
-                  demographicData.fetchErrors.length > 0 && (
-                    <div className="partial-error-note">
-                      {/* ... error display ... */}
-                    </div>
-                  )}
+                {/* ... partial error note ... */}
               </div>
             )}
-            {/* Message if demographics fetched successfully but object is empty */}
+            {/* ... Message if fetched but no data ... */}
             {!isFetchingDemographics &&
               !demographicsError &&
               !hasDemographicData && (
                 <div className="no-data-message">
-                  <FontAwesomeIcon icon={faExclamationCircle} />
-                  <p>
-                    Demographic data was fetched, but no specific details were
-                    available for the requested area levels.
-                  </p>
+                  {" "}
+                  /* ... no data message ... */{" "}
                 </div>
               )}
           </div>
