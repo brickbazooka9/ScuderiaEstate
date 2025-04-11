@@ -12,6 +12,7 @@ import {
   formatTransactionData,
   calculatePriceGrowth
 } from "./services/landRegistryService"; // Correct path
+import { fetchDemographicData } from "./services/demographicsService";
 
 // Fix default Leaflet icon issue
 delete L.Icon.Default.prototype._getIconUrl;
@@ -82,6 +83,10 @@ function App() {
   const [mapZoom, setMapZoom] = useState(12); // Slightly zoomed out default
   const [heatmapPoints, setHeatmapPoints] = useState([]); // State for heatmap [lat, lng, intensity]
 
+  const [demographicData, setDemographicData] = useState(null);
+  const [isFetchingDemographics, setIsFetchingDemographics] = useState(false);
+  const [demographicsError, setDemographicsError] = useState(null);
+
   // --- Sample Featured Properties (Keep or remove as needed) ---
   const properties = [
     {
@@ -116,7 +121,7 @@ function App() {
 
   // --- Search Handler ---
   const handleSearch = useCallback(async (e) => {
-    if (e) e.preventDefault(); // Allow calling without event object
+    if (e) e.preventDefault();
 
     const postcodeRegex = /^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$/i;
     const query = searchQuery.trim();
@@ -126,126 +131,156 @@ function App() {
       return;
     }
 
+    // --- Reset State ---
     setIsSearching(true);
+    setIsFetchingDemographics(true); // Start fetching demographics too
     setSearchResults(null);
     setSelectedProperty(null);
-    setView('listings'); // Reset view while searching
-    setHeatmapPoints([]); // Clear old heatmap
+    setView('listings');
+    setHeatmapPoints([]);
+    setDemographicData(null); // Clear previous demographics
+    setDemographicsError(null); // Clear previous errors
 
     let fetchedCoordinates = null;
-    let fetchedTransactions = [];
-    let propertyDataError = null;
+    let landRegistryTransactions = [];
+    let landRegistryError = null;
+    let fetchedDemographics = null; // Variable to hold fetched demo data
+    let demoError = null; // Variable to hold demo error
 
     try {
-      // 1. Geocode
-      fetchedCoordinates = await getCoordinatesFromPostcode(query);
-      if (fetchedCoordinates) {
-        console.log(`Geocoded: ${fetchedCoordinates.lat}, ${fetchedCoordinates.lng}, Town: ${fetchedCoordinates.town}`);
-        setMapCenter([fetchedCoordinates.lat, fetchedCoordinates.lng]);
-        setMapZoom(15); // Zoom in for postcode search
-      } else {
-        console.warn("Geocoding failed, map center not updated.");
-         // Optionally display a warning to the user?
-         setSearchResults({ errorMessage: "Could not find coordinates for this postcode." });
-         // Don't proceed if geocoding fails? Or allow fetching data anyway? Let's proceed for now.
-      }
-
-      // 2. Fetch Property Data (only if geocoding potentially worked or we decide to proceed anyway)
-       try {
-          const apiData = await fetchPropertyDataByPostcode(query);
-          fetchedTransactions = formatTransactionData(apiData);
-       } catch (landRegError) {
-           console.error("Land Registry Fetch Error:", landRegError);
-           propertyDataError = landRegError.message || "Failed to fetch property data.";
-           // Don't throw here, handle below based on whether we have *any* data
-       }
-
-
-      // 3. Process Results
-      if (fetchedTransactions.length > 0) {
-        const priceGrowthMetrics = calculatePriceGrowth(fetchedTransactions);
-        const totalPrice = fetchedTransactions.reduce((sum, t) => sum + t.price, 0);
-        const averagePrice = totalPrice / fetchedTransactions.length;
-
-        // 4. Generate Heatmap Data
+        // --- 1. Geocode ---
+        fetchedCoordinates = await getCoordinatesFromPostcode(query);
         if (fetchedCoordinates) {
-            // Normalize prices for intensity (0.1 to 1.0) based on *this postcode's* results
-            const prices = fetchedTransactions.map(t => t.price);
-            const minPrice = Math.min(...prices);
-            const maxPrice = Math.max(...prices);
-            const priceRange = maxPrice - minPrice;
-
-            const points = fetchedTransactions.map(t => {
-                let intensity = 0.5; // Default intensity
-                if (priceRange > 0) {
-                    intensity = 0.1 + 0.9 * ((t.price - minPrice) / priceRange); // Scale 0.1 to 1.0
-                }
-                intensity = Math.max(0.1, Math.min(1.0, intensity)); // Clamp between 0.1 and 1.0
-
-                // Cluster points near postcode center - NEEDS IMPROVEMENT with real geocoding per address if possible
-                const randomOffsetLat = (Math.random() - 0.5) * 0.004; // Smaller offset
-                const randomOffsetLng = (Math.random() - 0.5) * 0.004;
-                return [fetchedCoordinates.lat + randomOffsetLat, fetchedCoordinates.lng + randomOffsetLng, intensity];
-            });
-            setHeatmapPoints(points);
-            console.log(`Generated ${points.length} heatmap points.`);
+            setMapCenter([fetchedCoordinates.lat, fetchedCoordinates.lng]);
+            setMapZoom(15);
+        } else {
+             console.warn("Geocoding failed.");
+             // Decide if you want to stop here or continue
+             // For now, we'll let it continue but Land Reg/Demo might fail
         }
 
-        // 5. Create Search Summary Object
-        const latestTransaction = fetchedTransactions[0]; // Already sorted newest first
-        const locationName = fetchedCoordinates?.town || latestTransaction.town || query.toUpperCase();
+        // --- 2. Fetch Land Registry and Demographics Concurrently ---
+        const landRegistryPromise = fetchPropertyDataByPostcode(query)
+            .then(apiData => formatTransactionData(apiData))
+            .catch(err => {
+                console.error("Land Registry Fetch/Format Error:", err);
+                landRegistryError = err.message || "Failed to fetch property data.";
+                return []; // Return empty array on error
+            });
 
-        const searchSummary = {
-          id: `search-${query.replace(/\s/g, "")}`,
-          title: `Area Overview: ${query.toUpperCase()}`,
-          location: locationName,
-          postcode: query.toUpperCase(),
-          coordinates: fetchedCoordinates ? [fetchedCoordinates.lat, fetchedCoordinates.lng] : null,
-          details: { bedrooms: 'N/A', bathrooms: 'N/A', sqft: 'N/A', age: 'N/A' }, // Indicate area summary
-          price: {
-            asking: 'N/A',
-            estimated: `£${Math.round(averagePrice).toLocaleString()}`, // Avg price as estimate
-            roi: priceGrowthMetrics.annualizedReturn, // Use calculated value or "No result"
-            rentalYield: "No result", // Land Registry doesn't provide this
-          },
-          amenities: [], transport: [], schools: [], // Not applicable to area
-          riskScore: "No result", // Requires external data
-          image: `https://placehold.co/600x400/e0f7fa/00796b?text=${query.toUpperCase()}+Overview`, // Dynamic placeholder
-          transactionHistory: fetchedTransactions,
-          priceGrowth: priceGrowthMetrics, // Attach calculated metrics
-        };
+        const demographicsPromise = fetchDemographicData(query)
+             .catch(err => {
+                 console.error("Demographics Fetch Error:", err);
+                 demoError = err.message || "Failed to fetch demographic data.";
+                 return null; // Return null on error
+             });
 
-        setSelectedProperty(searchSummary);
-        setView("detail"); // Switch to detail view
-        setSearchResults({ success: true }); // Indicate success
+        // Wait for both fetches to complete
+        const [transactions, demographicsResult] = await Promise.all([
+            landRegistryPromise,
+            demographicsPromise
+        ]);
 
-      } else {
-        // No transactions found, even if geocoding worked
-        setSearchResults({
-            errorMessage: propertyDataError || "No transaction data found for this postcode.",
-        });
-         // Reset map view if no data? Optional.
-         // setMapCenter([51.505, -0.09]);
-         // setMapZoom(12);
-      }
+        landRegistryTransactions = transactions;
+        fetchedDemographics = demographicsResult; // Store result (could be null)
+        setDemographicsError(demoError); // Store specific error
+        setDemographicData(fetchedDemographics); // Store fetched data (or null)
+
+
+        // --- 3. Process Land Registry Results (if any) ---
+        if (landRegistryTransactions.length > 0) {
+            const priceGrowthMetrics = calculatePriceGrowth(landRegistryTransactions);
+            const averagePrice = landRegistryTransactions.reduce((sum, t) => sum + t.price, 0) / landRegistryTransactions.length;
+
+            // Generate Heatmap
+             if (fetchedCoordinates) {
+                 const prices = landRegistryTransactions.map(t => t.price);
+                 const minPrice = Math.min(...prices);
+                 const maxPrice = Math.max(...prices);
+                 const priceRange = maxPrice - minPrice;
+                 const points = landRegistryTransactions.map(t => {
+                     let intensity = priceRange > 0 ? 0.1 + 0.9 * ((t.price - minPrice) / priceRange) : 0.5;
+                     intensity = Math.max(0.1, Math.min(1.0, intensity));
+                     const randomOffsetLat = (Math.random() - 0.5) * 0.004;
+                     const randomOffsetLng = (Math.random() - 0.5) * 0.004;
+                     return [fetchedCoordinates.lat + randomOffsetLat, fetchedCoordinates.lng + randomOffsetLng, intensity];
+                 });
+                 setHeatmapPoints(points);
+             }
+
+            // Create Search Summary
+            const latestTransaction = landRegistryTransactions[0];
+            const locationName = fetchedCoordinates?.town || latestTransaction.town || query.toUpperCase();
+            const searchSummary = {
+              id: `search-${query.replace(/\s/g, "")}`,
+              title: `Area Overview: ${query.toUpperCase()}`,
+              location: locationName,
+              postcode: query.toUpperCase(),
+              coordinates: fetchedCoordinates ? [fetchedCoordinates.lat, fetchedCoordinates.lng] : null,
+              details: { bedrooms: 'N/A', bathrooms: 'N/A', sqft: 'N/A', age: 'N/A' },
+              price: {
+                asking: 'N/A',
+                estimated: `£${Math.round(averagePrice).toLocaleString()}`,
+                roi: priceGrowthMetrics.annualizedReturn,
+                rentalYield: "No result",
+              },
+              amenities: [], transport: [], schools: [],
+              riskScore: "No result",
+              image: `https://placehold.co/600x400/e0f7fa/00796b?text=${query.toUpperCase()}+Overview`,
+              transactionHistory: landRegistryTransactions,
+              priceGrowth: priceGrowthMetrics,
+              // --- Attach demographic data to the selected property ---
+              demographicData: fetchedDemographics // Attach the full demo object
+            };
+            setSelectedProperty(searchSummary);
+            setView("detail");
+            setSearchResults({ success: true });
+
+        } else {
+             // No Land Registry data found
+             setSearchResults({ errorMessage: landRegistryError || "No transaction data found." });
+             // Still show detail view if *demographics* were found?
+             if (fetchedDemographics) {
+                 // Create a minimal summary object focused on demographics
+                 const locationName = fetchedCoordinates?.town || query.toUpperCase();
+                 const demoSummary = {
+                     id: `search-${query.replace(/\s/g, "")}`,
+                     title: `Area Overview: ${query.toUpperCase()}`,
+                     location: locationName,
+                     postcode: query.toUpperCase(),
+                     coordinates: fetchedCoordinates ? [fetchedCoordinates.lat, fetchedCoordinates.lng] : null,
+                     details: { bedrooms: 'N/A', bathrooms: 'N/A', sqft: 'N/A', age: 'N/A' },
+                     price: { asking: 'N/A', estimated: 'N/A', roi: 'N/A', rentalYield: 'N/A' },
+                     amenities: [], transport: [], schools: [], riskScore: "No result",
+                     image: `https://placehold.co/600x400/e0f7fa/00796b?text=${query.toUpperCase()}+Overview`,
+                     transactionHistory: [], // Empty history
+                     priceGrowth: { growth: "No result", annualizedReturn: "No result" },
+                     demographicData: fetchedDemographics
+                 };
+                 setSelectedProperty(demoSummary);
+                 setView("detail");
+                  setSearchResults(null); // Clear LR error message if showing demo data
+             }
+        }
 
     } catch (error) {
-      // Catch errors from geocoding itself or unexpected errors
-      console.error("Error during main search execution:", error);
+      // Catch errors from geocoding or Promise.all itself
+      console.error("Error during overall search execution:", error);
       setSearchResults({ errorMessage: `Search failed: ${error.message || 'Please try again.'}` });
-       // Reset map on major error? Optional.
-       // setMapCenter([51.505, -0.09]);
-       // setMapZoom(12);
     } finally {
       setIsSearching(false);
+      setIsFetchingDemographics(false); // Finish fetching demographics
     }
-  }, [searchQuery]); // Dependency: searchQuery. useCallback prevents recreating function unnecessarily
+  }, [searchQuery]); // Add searchQuery to dependency array
 
-  // --- View Handlers ---
-  const handleViewProperty = useCallback((property) => {
-    setSelectedProperty(property);
-    setView("detail");
-    setHeatmapPoints([]); // Clear postcode heatmap when viewing specific property
+   // --- View Handlers (minor change to clear demographics) ---
+   const handleViewProperty = useCallback((property) => {
+        setSelectedProperty(property);
+        setView("detail");
+        setHeatmapPoints([]);
+        setDemographicData(null); // Clear area demographics when viewing featured
+        setDemographicsError(null);
+
     if (property.coordinates) {
       setMapCenter(property.coordinates);
       setMapZoom(16); // Zoom closer for specific property
@@ -259,10 +294,13 @@ function App() {
   }, []); // No dependencies needed if 'properties' array is stable
 
   const handleBackToListings = useCallback(() => {
-    setSelectedProperty(null);
-    setView("listings");
-    setSearchResults(null); // Clear search status/errors
-    setHeatmapPoints([]); // Clear heatmap
+        setSelectedProperty(null);
+        setView("listings");
+        setSearchResults(null);
+        setHeatmapPoints([]);
+        setDemographicData(null); // Clear demographics on back
+        setDemographicsError(null);
+
     // Optionally reset map view or keep last search view
     // setMapCenter([51.505, -0.09]);
     // setMapZoom(12);
@@ -275,30 +313,36 @@ function App() {
       <div className="app-container">
         {/* --- Left Panel: Map and Search --- */}
         <div className="map-panel">
-          <form className="search-bar" onSubmit={handleSearch}>
-            <input
-              type="text"
-              placeholder="Enter UK Postcode (e.g., SW1A 0AA)"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              disabled={isSearching}
-            />
-            <button type="submit" disabled={isSearching}>
-              {isSearching ? "Searching..." : "Search"}
-            </button>
-          </form>
+        <form className="search-bar" onSubmit={handleSearch}>
+                <input
+                    type="text"
+                    placeholder="Enter UK Postcode (e.g., SW1A 0AA)"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    disabled={isSearching || isFetchingDemographics} // Disable while either is loading
+                />
+                <button type="submit" disabled={isSearching || isFetchingDemographics}>
+                    {(isSearching || isFetchingDemographics) ? "Searching..." : "Search"}
+                </button>
+            </form>
 
           {/* Display Search Errors/Status */}
-           {view === 'listings' && searchResults?.errorMessage && (
-              <div className="search-status error-message">
-                 <p>{searchResults.errorMessage}</p>
-              </div>
-           )}
-           {isSearching && (
-               <div className="search-status info-message">
-                  <p>Loading data...</p>
-               </div>
-           )}
+          {view === 'listings' && searchResults?.errorMessage && (
+                <div className="search-status error-message">
+                    <p>{searchResults.errorMessage}</p>
+                </div>
+            )}
+             {/* Display Demographic Fetch Error if relevant */}
+             {view === 'listings' && demographicsError && !searchResults?.errorMessage && (
+                  <div className="search-status error-message">
+                     <p>Demographics: {demographicsError}</p>
+                  </div>
+             )}
+            {(isSearching || isFetchingDemographics) && (
+                <div className="search-status info-message">
+                    <p>Loading data... {(isSearching && isFetchingDemographics) ? '(Property & Demographics)' : (isSearching ? '(Property)' : '(Demographics)')}</p>
+                </div>
+            )}
 
           <MapContainer
             center={mapCenter}
@@ -354,13 +398,17 @@ function App() {
 
         {/* --- Right Panel: Listings or Details --- */}
         <div className="property-panel">
-          {view === 'detail' && selectedProperty ? (
-            // Show Property Details (handles both featured and search summary)
-            <PropertyDetail
-              property={selectedProperty}
-              onBackToListings={handleBackToListings}
-            />
-          ) : (
+           {view === 'detail' && selectedProperty ? (
+             // Pass demographic loading/error state if needed for finer control
+             <PropertyDetail
+               property={selectedProperty}
+               // Pass down demographic state
+               demographicData={selectedProperty.demographicData || demographicData} // Use attached data first
+               isFetchingDemographics={isFetchingDemographics}
+               demographicsError={demographicsError}
+               onBackToListings={handleBackToListings}
+             />
+           ) : (
             // Show Listings View
             <>
               <h2>Featured Properties</h2>

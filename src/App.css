@@ -654,3 +654,196 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.property-detail .demographics-tab-content {
+  /* Optional: slightly different background for this tab */
+  /* background-color: #f8f9fa; */
+}
+
+.property-detail .demographics-section h3 {
+  /* Adjust heading style if needed */
+  /* border-bottom: 2px solid #6c757d; */ /* Gray border? */
+  /* color: #495057; */
+}
+
+.demographics-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px; /* Space between cards */
+}
+
+.demographic-card {
+  background-color: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+  overflow: hidden; /* Ensure content stays within rounded corners */
+}
+
+.demographic-card.error,
+.demographic-card.no-data-card {
+  border-left: 4px solid #dc3545; /* Red border for error */
+}
+.demographic-card.no-data-card {
+  border-left: 4px solid #ffc107; /* Yellow border for no data */
+}
+
+
+.demographic-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  background-color: #f8f9fa; /* Light header background */
+  border-bottom: 1px solid #dee2e6;
+}
+
+.demographic-card .topic-icon {
+  font-size: 1.4rem;
+  color: #007bff; /* Primary color for icons */
+  width: 25px; /* Fixed width */
+  text-align: center;
+}
+
+.demographic-card h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #343a40;
+  flex-grow: 1;
+}
+
+.demographic-card .card-content {
+  padding: 15px;
+  display: flex;
+  flex-direction: column; /* Stack LSOA/LAD sections */
+  gap: 20px;
+}
+
+.demographic-card .card-content.no-data p,
+.demographic-card .card-content.error-content p {
+  font-style: italic;
+  color: #6c757d;
+  margin: 0;
+  text-align: center;
+}
+.demographic-card .card-content.error-content small {
+  display: block;
+  text-align: center;
+  margin-top: 5px;
+  color: #dc3545;
+}
+
+
+.demographic-card .chart-section {
+  /* Styles for the container of each chart (LSOA/LAD) */
+}
+
+
+/* --- Demographic Bar Chart Styles --- */
+
+.demographic-bar-chart {
+  /* Container for one level's chart */
+}
+
+.demographic-bar-chart h5 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #495057;
+  margin: 0 0 10px 0;
+  padding-bottom: 5px;
+  border-bottom: 1px dashed #ced4da;
+}
+.demographic-bar-chart h5 .area-name {
+  font-weight: 400;
+  color: #6c757d;
+  font-size: 0.9em;
+}
+
+
+.chart-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px; /* Space between bars */
+}
+
+.chart-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* white-space: nowrap; */ /* Prevent label wrapping if desired */
+}
+
+.chart-label {
+  flex: 0 0 45%; /* Fixed width for labels, adjust as needed */
+  font-size: 0.85rem;
+  color: #495057;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* Prevent wrapping */
+  text-align: right; /* Align label text right */
+  padding-right: 5px;
+}
+
+.chart-bar-container {
+  flex-grow: 1; /* Bar takes remaining space */
+  background-color: #e9ecef; /* Background track for the bar */
+  border-radius: 3px;
+  height: 16px; /* Height of the bar track */
+  overflow: hidden; /* Hide overflow of the bar */
+  position: relative; /* For potential future absolute elements */
+}
+
+.chart-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease-out; /* Smooth animation */
+  background-color: #007bff; /* Default bar color */
+}
+
+.chart-percentage {
+  flex: 0 0 50px; /* Fixed width for percentage value */
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #343a40;
+  text-align: right;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+.no-chart-data {
+  font-size: 0.9rem;
+  font-style: italic;
+  color: #6c757d;
+  padding: 10px 0;
+}
+
+/* Adjust responsiveness if needed */
+@media (max-width: 576px) {
+  .chart-item {
+      /* Allow wrapping on very small screens */
+      /* flex-wrap: wrap; */
+      position: relative; /* Adjust layout if needed */
+      padding-bottom: 5px;
+  }
+   .chart-label {
+       flex-basis: 100%; /* Label takes full width */
+       text-align: left; /* Align left */
+       margin-bottom: 3px;
+       white-space: normal; /* Allow wrapping */
+   }
+   .chart-bar-container {
+       /* Adjust bar container */
+       height: 12px;
+   }
+    .chart-percentage {
+      /* Position percentage differently if needed */
+       position: absolute;
+       right: 0;
+       top: 0;
+       font-size: 0.8rem;
+    }
+}
