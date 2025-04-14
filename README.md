@@ -75,6 +75,17 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Map tiles from OpenStreetMap
 
 
+## Problem Statement
+
+
+###
+Over the past year, foreign ownership of UK properties has continued to grow.
+Overall, there was a 2.6% increase in foreign-owned properties.
+Ownership by Hong Kong nationals rose by 5.7%, the US by 5.5%, and China by a remarkable 12.9%.
+However, while demand from overseas investors is rising, many buyers still face major challenges.
+They often lack clear information about risks such as natural disasters, crime rates, and long-term land value, leading to uncertainty when making investment decisions.
+
+
 ## Risks and Challenges (yuta editting)
 
 Through interviews with several potential customers, concerns were raised regarding Data Security, Privacy, and Fraud Risk in relation to our business.
