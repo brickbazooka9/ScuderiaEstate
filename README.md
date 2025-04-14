@@ -75,7 +75,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Map tiles from OpenStreetMap
 
 
-## Risks and Challenges (yuta added)
+## Risks and Challenges (yuta editting)
 
 Through interviews with several potential customers, concerns were raised regarding Data Security, Privacy, and Fraud Risk in relation to our business.
 Our platform targets overseas real estate investors and handles both financial transactions and personal information.
