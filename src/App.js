@@ -7,6 +7,7 @@ import L from "leaflet"; // Import L for default icon fix
 import HeatmapLayer from "./components/HeatmapLayer";
 import PropertyCard from "./components/PropertyCard";
 import PropertyDetail from "./components/PropertyDetail";
+import LoadingScreen from "./components/LoadingScreen";
 import {
   fetchPropertyDataByPostcode,
   formatTransactionData,
@@ -118,6 +119,24 @@ function App() {
   const [isScrapingComplete, setIsScrapingComplete] = useState(false);
   const eventSourceRef = useRef(null); // Ref to hold the EventSource instance
 
+  // Determine if the main loading screen should be visible
+  // Show full-screen loader when we're loading AND either:
+  // 1. No properties found yet OR
+  // 2. We're within 2 seconds of starting the search (for a smoother UX)
+  const [searchStartTime, setSearchStartTime] = useState(null);
+  const isLoading =
+    (isFetchingScraper || isSearchingLRDemo) &&
+    (scrapedListings.length === 0 ||
+      (searchStartTime && Date.now() - searchStartTime < 2000));
+
+  // Get a loading message based on current state
+  const getLoadingMessage = () => {
+    if (!activeSearchPostcode) return "Preparing search...";
+    if (scrapedListings.length > 0)
+      return `Found ${scrapedListings.length} properties...`;
+    return `Searching ${activeSearchPostcode}`;
+  };
+
   // --- Sample Featured Properties ---
   const sampleProperties = [
     {
@@ -219,7 +238,7 @@ function App() {
       eventSourceRef.current = null;
     });
 
-    // Listener for custom 'status' events (e.g., no_results)
+    // Listener for custom 'status' events (e.g., no_results, initialized)
     es.addEventListener("status", (event) => {
       console.log("SSE 'status' event received:", event.data);
       try {
@@ -228,6 +247,9 @@ function App() {
           console.log("Scraper reported no results found.");
           // You could set a specific message here if needed
           // setScraperStatusMessage("No listings found for this area.");
+        } else if (statusData.status === "initialized") {
+          console.log("Scraper initialized and starting search");
+          // Keep the loading state active
         }
       } catch (e) {
         console.error("Failed to parse SSE status data:", event.data, e);
@@ -283,6 +305,7 @@ function App() {
         setScraperError(null);
         setIsFetchingScraper(false);
         setIsScrapingComplete(false);
+        setSearchStartTime(null);
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
           eventSourceRef.current = null;
@@ -297,6 +320,7 @@ function App() {
       setView("listings");
       setHeatmapPoints([]);
       setActiveSearchPostcode(query); // Set the postcode that triggers effects/streams
+      setSearchStartTime(Date.now()); // Record search start time for UX timing
 
       // --- Start Scraper Stream ---
       // This function call now just *starts* the stream, doesn't wait for it
@@ -590,9 +614,17 @@ function App() {
     setScraperError(null);
     setHeatmapPoints([]);
     setSearchResults(null);
-    setSelectedProperty({ ...property, isLoadingLR: false, isLoadingDemo: false, source: "Featured" });
+    setSelectedProperty({
+      ...property,
+      isLoadingLR: false,
+      isLoadingDemo: false,
+      source: "Featured",
+    });
     setView("detail");
-    if (property.coordinates) { setMapCenter(property.coordinates); setMapZoom(16); }
+    if (property.coordinates) {
+      setMapCenter(property.coordinates);
+      setMapZoom(16);
+    }
   }, []);
   const handleBackToListings = useCallback(() => {
     setSelectedProperty(null);
@@ -602,6 +634,12 @@ function App() {
   // --- Render ---
   return (
     <div className="App">
+      <LoadingScreen
+        isVisible={isLoading}
+        message={getLoadingMessage()}
+        itemsFound={scrapedListings.length}
+      />
+
       <div className="app-container">
         {/* --- Left Panel: Map and Search --- */}
         <div className="map-panel">
@@ -623,21 +661,22 @@ function App() {
             </button>
           </form>
 
-          {/* Display Search Status/Errors */}
+          {/* Display Search Status/Errors - Keep this for non-blocking feedback once properties start appearing */}
           <div className="search-status-container">
-            {/* Combined Loading Indicator */}
-            {(isSearchingLRDemo || isFetchingScraper) && (
-              <div className="search-status info-message loading-indicator">
-                <p>
-                  Loading {isFetchingScraper ? "Listings" : ""}
-                  {isFetchingScraper && isSearchingLRDemo ? " & " : ""}
-                  {isSearchingLRDemo ? "Area Data" : ""}...
-                  {isFetchingScraper &&
-                    !isScrapingComplete &&
-                    ` (${scrapedListings.length} found)`}
-                </p>
-              </div>
-            )}
+            {/* Combined Loading Indicator - Keep for in-progress feedback */}
+            {(isSearchingLRDemo || isFetchingScraper) &&
+              scrapedListings.length > 0 && (
+                <div className="search-status info-message loading-indicator">
+                  <p>
+                    Loading {isFetchingScraper ? "Listings" : ""}
+                    {isFetchingScraper && isSearchingLRDemo ? " & " : ""}
+                    {isSearchingLRDemo ? "Area Data" : ""}...
+                    {isFetchingScraper &&
+                      !isScrapingComplete &&
+                      ` (${scrapedListings.length} found)`}
+                  </p>
+                </div>
+              )}
             {/* Scraper Error */}
             {scraperError && (
               <div className="search-status error-message">

@@ -270,7 +270,8 @@ app.get("/api/land-registry", async (req, res) => {
 });
 
 // --- NEW Scraper Endpoint using SSE ---
-app.get("/api/scrape-listings", (req, res) => { // REMOVED async - SSE is event-driven
+app.get("/api/scrape-listings", (req, res) => {
+  // REMOVED async - SSE is event-driven
   const { postcode } = req.query;
 
   if (!postcode) {
@@ -293,8 +294,17 @@ app.get("/api/scrape-listings", (req, res) => { // REMOVED async - SSE is event-
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders(); // Send headers immediately
 
+  // Send an immediate "initialized" event to the client
+  res.write(
+    `event: status\ndata: ${JSON.stringify({
+      status: "initialized",
+      message: "Starting property search...",
+    })}\n\n`
+  );
+
   const scriptPath = path.join(__dirname, "scrapers", "scrape.py");
-  const pythonExecutable = process.env.PYTHON_EXECUTABLE || "python3" || "python";
+  const pythonExecutable =
+    process.env.PYTHON_EXECUTABLE || "python3" || "python";
   let stdoutBuffer = ""; // Buffer for potentially incomplete lines
   let pythonProcess = null; // Declare process variable outside
 
@@ -302,7 +312,8 @@ app.get("/api/scrape-listings", (req, res) => { // REMOVED async - SSE is event-
     console.log(
       `[Proxy Scrape SSE] Executing: ${pythonExecutable} ${scriptPath} --postcode ${postcode}`
     );
-    pythonProcess = spawn(pythonExecutable, [ // Assign to the outer variable
+    pythonProcess = spawn(pythonExecutable, [
+      // Assign to the outer variable
       scriptPath,
       "--postcode",
       postcode,
@@ -314,33 +325,39 @@ app.get("/api/scrape-listings", (req, res) => { // REMOVED async - SSE is event-
       let newlineIndex;
 
       // Process all complete lines in the buffer
-      while ((newlineIndex = stdoutBuffer.indexOf('\n')) >= 0) {
+      while ((newlineIndex = stdoutBuffer.indexOf("\n")) >= 0) {
         const line = stdoutBuffer.substring(0, newlineIndex).trim();
         stdoutBuffer = stdoutBuffer.substring(newlineIndex + 1); // Remove processed line + newline
 
-        if (line) { // Process only non-empty lines
+        if (line) {
+          // Process only non-empty lines
           console.log(`[Scraper STDOUT Line]: ${line.substring(0, 100)}...`); // Log received line
           try {
             const parsedData = JSON.parse(line);
 
             // Determine message type based on parsed data structure
             if (parsedData.error) {
-              console.error("[Proxy Scrape SSE] Forwarding error event:", parsedData.error);
+              console.error(
+                "[Proxy Scrape SSE] Forwarding error event:",
+                parsedData.error
+              );
               res.write(`event: error\ndata: ${line}\n\n`); // Send error event
-            } else if (parsedData.status === 'complete') {
+            } else if (parsedData.status === "complete") {
               console.log("[Proxy Scrape SSE] Forwarding complete event");
               res.write(`event: complete\ndata: ${line}\n\n`); // Send complete event
-            } else if (parsedData.status === 'no_results') {
-               console.log("[Proxy Scrape SSE] Forwarding no_results status");
-               res.write(`event: status\ndata: ${line}\n\n`); // Send custom status event
-            }
-            else {
+            } else if (parsedData.status === "no_results") {
+              console.log("[Proxy Scrape SSE] Forwarding no_results status");
+              res.write(`event: status\ndata: ${line}\n\n`); // Send custom status event
+            } else {
               // Assume it's property data
               // console.log("[Proxy Scrape SSE] Forwarding property data event"); // Can be verbose
               res.write(`data: ${line}\n\n`); // Send standard message event
             }
           } catch (parseError) {
-            console.error(`[Proxy Scrape SSE] Failed to parse JSON line: ${line}`, parseError);
+            console.error(
+              `[Proxy Scrape SSE] Failed to parse JSON line: ${line}`,
+              parseError
+            );
             // Optionally send a parse error back to client? Or just log server-side.
             // res.write(`event: error\ndata: ${JSON.stringify({error: "Failed to parse data from scraper"})}\n\n`);
           }
@@ -356,69 +373,85 @@ app.get("/api/scrape-listings", (req, res) => { // REMOVED async - SSE is event-
 
     // --- Handle Python script errors ---
     pythonProcess.on("error", (error) => {
-      console.error(`[Proxy Scrape SSE] Failed to start subprocess: ${error.message}`);
-      if (!res.writableEnded) { // Check if response stream is still open
-          // Send error event before closing
-          res.write(`event: error\ndata: ${JSON.stringify({ error: `Failed to start scraper: ${error.message}` })}\n\n`);
-          res.end(); // Close the connection on spawn error
+      console.error(
+        `[Proxy Scrape SSE] Failed to start subprocess: ${error.message}`
+      );
+      if (!res.writableEnded) {
+        // Check if response stream is still open
+        // Send error event before closing
+        res.write(
+          `event: error\ndata: ${JSON.stringify({
+            error: `Failed to start scraper: ${error.message}`,
+          })}\n\n`
+        );
+        res.end(); // Close the connection on spawn error
       }
     });
 
     // --- Handle Python script exit ---
     pythonProcess.on("close", (code) => {
       console.log(`[Proxy Scrape SSE] Python script exited with code ${code}`);
-      if (!res.writableEnded) { // Check if response stream is still open
-          if (code !== 0) {
-              // If exited non-zero and no 'error' event was sent yet for this specific exit
-              // It's possible an error JSON was printed just before exit
-              console.error(`[Proxy Scrape SSE] Script exited non-zero (${code}), ensuring error state sent.`);
-              // We might have already sent specific errors via stdout JSON parsing
-              // Send a generic exit error ONLY if no specific error was likely sent.
-              // This part is tricky. Relying on Python to print JSON errors is better.
-              // We could send a final generic error if needed:
-              // res.write(`event: error\ndata: ${JSON.stringify({ error: `Scraper exited with code ${code}` })}\n\n`);
-          } else {
-              // If exited cleanly (code 0), ensure 'complete' was sent.
-              // Python script should send the 'complete' JSON itself.
-              // We could force send a complete event here if needed, but it's better if Python does it.
-              // res.write(`event: complete\ndata: ${JSON.stringify({ status: "complete", exitCode: code })}\n\n`);
-          }
-          console.log("[Proxy Scrape SSE] Closing SSE connection.");
-          res.end(); // Close the SSE connection when Python process finishes
+      if (!res.writableEnded) {
+        // Check if response stream is still open
+        if (code !== 0) {
+          // If exited non-zero and no 'error' event was sent yet for this specific exit
+          // It's possible an error JSON was printed just before exit
+          console.error(
+            `[Proxy Scrape SSE] Script exited non-zero (${code}), ensuring error state sent.`
+          );
+          // We might have already sent specific errors via stdout JSON parsing
+          // Send a generic exit error ONLY if no specific error was likely sent.
+          // This part is tricky. Relying on Python to print JSON errors is better.
+          // We could send a final generic error if needed:
+          // res.write(`event: error\ndata: ${JSON.stringify({ error: `Scraper exited with code ${code}` })}\n\n`);
+        } else {
+          // If exited cleanly (code 0), ensure 'complete' was sent.
+          // Python script should send the 'complete' JSON itself.
+          // We could force send a complete event here if needed, but it's better if Python does it.
+          // res.write(`event: complete\ndata: ${JSON.stringify({ status: "complete", exitCode: code })}\n\n`);
+        }
+        console.log("[Proxy Scrape SSE] Closing SSE connection.");
+        res.end(); // Close the SSE connection when Python process finishes
       }
     });
 
     // --- Handle Client Disconnect ---
-    req.on('close', () => {
-        console.log('[Proxy Scrape SSE] Client disconnected.');
-        if (pythonProcess && !pythonProcess.killed) {
-            console.log('[Proxy Scrape SSE] Killing Python process...');
-            pythonProcess.kill('SIGTERM'); // Send termination signal
-        }
-        // Ensure response ends if not already
-        if (!res.writableEnded) {
-             res.end();
-        }
+    req.on("close", () => {
+      console.log("[Proxy Scrape SSE] Client disconnected.");
+      if (pythonProcess && !pythonProcess.killed) {
+        console.log("[Proxy Scrape SSE] Killing Python process...");
+        pythonProcess.kill("SIGTERM"); // Send termination signal
+      }
+      // Ensure response ends if not already
+      if (!res.writableEnded) {
+        res.end();
+      }
     });
-
-
   } catch (error) {
-    console.error(`[Proxy Scrape SSE] Error setting up scraper execution: ${error.message}`);
-     if (!res.writableEnded) {
-        try {
-          // Try to send an error before closing if headers haven't been sent
-          if (!res.headersSent) {
-               res.status(500).json({ error: "Internal server error starting scraper." });
-          } else {
-              // If headers sent, use SSE format for error
-               res.write(`event: error\ndata: ${JSON.stringify({ error: `Internal server error: ${error.message}` })}\n\n`);
-               res.end();
-          }
-        } catch(e) {
-             console.error("Error sending error response:", e);
-             if (!res.writableEnded) res.end();
+    console.error(
+      `[Proxy Scrape SSE] Error setting up scraper execution: ${error.message}`
+    );
+    if (!res.writableEnded) {
+      try {
+        // Try to send an error before closing if headers haven't been sent
+        if (!res.headersSent) {
+          res
+            .status(500)
+            .json({ error: "Internal server error starting scraper." });
+        } else {
+          // If headers sent, use SSE format for error
+          res.write(
+            `event: error\ndata: ${JSON.stringify({
+              error: `Internal server error: ${error.message}`,
+            })}\n\n`
+          );
+          res.end();
         }
-     }
+      } catch (e) {
+        console.error("Error sending error response:", e);
+        if (!res.writableEnded) res.end();
+      }
+    }
   }
 });
 

@@ -907,68 +907,161 @@ class RightmoveScraper:
             return False
 
     def search_by_postcode(self):
-        # ... same logic as before ...
         print(
             f"Navigating to Rightmove homepage and searching for postcode: {self.search_postcode}",
             file=sys.stderr,
         )
         try:
             self.driver.get("https://www.rightmove.co.uk/")
-            time.sleep(random.uniform(1.5, 3))
-            try:
-                accept_locator = (By.XPATH, '//button[contains(text(), "Accept")]')
-                accept_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable(accept_locator)
-                )
-                accept_button.click()
-                time.sleep(random.uniform(0.5, 1))
-            except TimeoutException:
-                pass
-            except Exception as e:
-                print(f"Error clicking cookie button: {e}", file=sys.stderr)
 
+            # Wait for a key element like the search box to confirm basic page load
             search_box_locator = (
                 By.CSS_SELECTOR,
                 "input.dsrm_inputText.ta_userInput#ta_searchInput",
             )
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located(search_box_locator)
+                )
+                print("Homepage basic structure loaded.", file=sys.stderr)
+            except TimeoutException:
+                raise Exception(
+                    "Homepage did not load correctly (search box not found)."
+                )
+
+            # --- Optimized Cookie Handling ---
+            print("Checking for cookie banner...", file=sys.stderr)
+            accept_locator_xpath = '//button[contains(text(), "Accept") or contains(text(), "ACCEPT ALL")]'  # Flexible XPath
+            try:
+                # Use find_elements for a non-blocking check. Returns empty list if not found.
+                accept_buttons = self.driver.find_elements(
+                    By.XPATH, accept_locator_xpath
+                )
+
+                if accept_buttons:
+                    # Found potential button(s). Try to click the first one.
+                    button_to_click = accept_buttons[0]
+                    # Check if it's actually visible/interactable before clicking
+                    if button_to_click.is_displayed() and button_to_click.is_enabled():
+                        try:
+                            print(
+                                "Cookie banner found. Attempting to click...",
+                                file=sys.stderr,
+                            )
+                            button_to_click.click()
+                            print("Clicked cookie accept button.", file=sys.stderr)
+                            time.sleep(
+                                random.uniform(0.2, 0.4)
+                            )  # Minimal pause ONLY after successful click
+                        except ElementNotInteractableException:
+                            # Fallback if click is intercepted or element obscured
+                            try:
+                                print(
+                                    "Cookie button not directly interactable, trying JS click...",
+                                    file=sys.stderr,
+                                )
+                                self.driver.execute_script(
+                                    "arguments[0].click();", button_to_click
+                                )
+                                print(
+                                    "Clicked cookie accept button via JS.",
+                                    file=sys.stderr,
+                                )
+                                time.sleep(
+                                    random.uniform(0.2, 0.4)
+                                )  # Minimal pause ONLY after successful click
+                            except Exception as js_e:
+                                print(
+                                    f"Warning: JS click on cookie button failed: {js_e}",
+                                    file=sys.stderr,
+                                )
+                        except Exception as click_e:
+                            print(
+                                f"Warning: Error clicking cookie button: {click_e}",
+                                file=sys.stderr,
+                            )
+                    else:
+                        # Found in DOM but not visible/enabled. Ignore it.
+                        print(
+                            "Cookie button found but not interactable, proceeding without click.",
+                            file=sys.stderr,
+                        )
+                else:
+                    # Button not found by find_elements - common case if already accepted.
+                    print(
+                        "Cookie banner button not found (or already handled), proceeding.",
+                        file=sys.stderr,
+                    )
+
+            except Exception as cookie_e:
+                # Catch unexpected errors during the check itself (e.g., invalid XPath temporarily)
+                print(
+                    f"Warning: Error during cookie banner check logic: {cookie_e}",
+                    file=sys.stderr,
+                )
+            # --- End of Optimized Cookie Handling ---
+
+            # --- Search Box Interaction (Using previous optimized version) ---
             search_box = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable(search_box_locator)
             )
             search_box.clear()
             search_box.send_keys(self.search_postcode)
-            time.sleep(random.uniform(1, 2))
 
-            autocomplete_locator = (
+            # --- Autocomplete ---
+            autocomplete_list_locator = (By.CSS_SELECTOR, "ul.ta_searchResults")
+            autocomplete_first_item_locator = (
                 By.CSS_SELECTOR,
                 "ul.ta_searchResults li.ta_searchResultRow",
             )
-            if not self.robust_click(autocomplete_locator, timeout=10):
-                raise Exception("Failed to click autocomplete result.")
-            time.sleep(random.uniform(0.5, 1.5))
+            try:
+                WebDriverWait(self.driver, 7).until(
+                    EC.visibility_of_element_located(autocomplete_list_locator)
+                )
+            except TimeoutException:
+                raise Exception(
+                    "Autocomplete suggestions did not appear after typing postcode."
+                )
 
+            if not self.robust_click(autocomplete_first_item_locator, timeout=7):
+                raise Exception("Failed to click autocomplete result.")
+
+            # --- 'For Sale' Button ---
             for_sale_locator = (
                 By.CSS_SELECTOR,
                 "button.dsrm_button[data-testid='forSaleCta']",
             )
-            if not self.robust_click(for_sale_locator, timeout=10):
+            WebDriverWait(self.driver, 7).until(
+                EC.element_to_be_clickable(for_sale_locator)
+            )
+            if not self.robust_click(for_sale_locator, timeout=7):
                 raise Exception("Failed to click 'For Sale' button.")
-            time.sleep(random.uniform(1, 2.5))
 
+            # --- Search Button ---
             search_button_locator = (By.CSS_SELECTOR, "button.dsrm_button#submit")
-            if not self.robust_click(search_button_locator, timeout=10):
+            WebDriverWait(self.driver, 7).until(
+                EC.element_to_be_clickable(search_button_locator)
+            )
+            if not self.robust_click(search_button_locator, timeout=7):
                 raise Exception("Failed to click 'Search Properties' button.")
 
+            # --- Wait for Results Page ---
             results_price_locator = (By.CSS_SELECTOR, ".PropertyPrice_price__VL65t")
-            WebDriverWait(self.driver, 20).until(
+            WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located(results_price_locator)
             )
             print("Successfully navigated to search results page", file=sys.stderr)
             return True
+
         except Exception as e:
-            print(f"Error during search navigation: {e}", file=sys.stderr)
+            # Make sure to handle the error reporting (e.g., print_sse_json if needed)
+            print(
+                f"Error during search navigation: {type(e).__name__} - {e}",
+                file=sys.stderr,
+            )
             traceback.print_exc(file=sys.stderr)
-            # Send error via SSE
-            print_sse_json({"error": f"Search navigation failed: {e}"})
+            # Example SSE error reporting:
+            # print_sse_json({"error": f"Search navigation failed: {type(e).__name__} - {e}"})
             return False
 
     # --- Parse method MODIFIED to print each result ---
