@@ -7,6 +7,8 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.REACT_APP_PROXY_PORT || 3001; // Use port 3001 unless specified elsewere
 const { URLSearchParams } = require("url"); // Import URLSearchParams
+const { spawn } = require("child_process"); // <-- Add child_process
+const path = require("path"); // <-- Add path for script location
 
 // Configure CORS
 // Allow requests specifically from your React app's origin
@@ -249,26 +251,149 @@ app.get("/api/land-registry", async (req, res) => {
         "[Proxy LR] Land Registry Error Data:",
         error.response.data
       );
-      res
-        .status(error.response.status)
-        .json({
-          error: `Land Registry API error: ${error.response.status}`,
-          details: error.response.data,
-        });
+      res.status(error.response.status).json({
+        error: `Land Registry API error: ${error.response.status}`,
+        details: error.response.data,
+      });
     } else if (error.request) {
       console.error("[Proxy LR] No response received:", error.request);
-      res
-        .status(504)
-        .json({
-          error:
-            "No response received from Land Registry API (Gateway Timeout).",
-        });
+      res.status(504).json({
+        error: "No response received from Land Registry API (Gateway Timeout).",
+      });
     } else {
       console.error("[Proxy LR] Error setting up request:", error.message);
       res
         .status(500)
         .json({ error: "Internal server error contacting Land Registry API." });
     }
+  }
+});
+
+app.get("/api/scrape-listings", async (req, res) => {
+  const { postcode } = req.query;
+
+  if (!postcode) {
+    return res
+      .status(400)
+      .json({ error: "Postcode query parameter is required." });
+  }
+
+  // Basic UK Postcode Regex (adjust if needed)
+  const postcodeRegex = /^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$/i;
+  if (!postcodeRegex.test(postcode)) {
+    return res
+      .status(400)
+      .json({ error: "Invalid UK postcode format provided." });
+  }
+
+  console.log(`[Proxy Scrape] Received request for postcode: ${postcode}`);
+  const scriptPath = path.join(__dirname, "scrapers", "scrape.py"); // <-- Path to your script
+  const pythonExecutable =
+    process.env.PYTHON_EXECUTABLE || "python3" || "python"; // Or specify full path e.g., /usr/bin/python3
+
+  let stdoutData = "";
+  let stderrData = "";
+
+  try {
+    // Check if python executable exists? (More advanced check needed)
+    console.log(
+      `[Proxy Scrape] Executing: ${pythonExecutable} ${scriptPath} --postcode ${postcode}`
+    );
+    const pythonProcess = spawn(pythonExecutable, [
+      scriptPath,
+      "--postcode",
+      postcode,
+    ]);
+
+    pythonProcess.stdout.on("data", (data) => {
+      stdoutData += data.toString();
+    });
+
+    pythonProcess.stderr.on("data", (data) => {
+      stderrData += data.toString();
+      console.error(`[Scraper STDERR]: ${data.toString().trim()}`); // Log stderr in real-time
+    });
+
+    pythonProcess.on("error", (error) => {
+      console.error(
+        `[Proxy Scrape] Failed to start subprocess: ${error.message}`
+      );
+      // Don't try to send response here, wait for 'close'
+      stderrData += `Failed to start subprocess: ${error.message}\n`;
+    });
+
+    pythonProcess.on("close", (code) => {
+      console.log(`[Proxy Scrape] Python script exited with code ${code}`);
+      console.log(
+        `[Proxy Scrape] Raw stdout: ${stdoutData.substring(0, 500)}...`
+      ); // Log start of stdout
+      // Log full stderr if there was any
+      if (stderrData) {
+        console.error(`[Proxy Scrape] Full stderr:\n${stderrData}`);
+      }
+
+      if (code !== 0) {
+        console.error(`[Proxy Scrape] Python script error (Code: ${code})`);
+        return res.status(500).json({
+          error: `Scraper script failed with exit code ${code}. Check server logs.`,
+          details: stderrData.trim() || "No specific error output from script.",
+        });
+      }
+
+      try {
+        // Attempt to parse the stdout as JSON
+        const listings = JSON.parse(stdoutData);
+
+        // Check if the parsed data is an array (expected output)
+        if (!Array.isArray(listings)) {
+          // Handle cases where script output JSON but not the expected array (e.g., {"error": ...})
+          if (
+            typeof listings === "object" &&
+            listings !== null &&
+            listings.error
+          ) {
+            console.error(
+              `[Proxy Scrape] Scraper script returned an error object: ${listings.error}`
+            );
+            return res.status(500).json({
+              error: `Scraper script reported an error: ${listings.error}`,
+              details: stderrData.trim(),
+            });
+          } else {
+            console.error(
+              "[Proxy Scrape] Scraper script output was valid JSON but not an array."
+            );
+            return res.status(500).json({
+              error: "Scraper script returned unexpected data format.",
+              details: `Expected JSON array, received: ${typeof listings}`,
+            });
+          }
+        }
+
+        console.log(
+          `[Proxy Scrape] Successfully parsed ${listings.length} listings.`
+        );
+        res.status(200).json(listings); // Send the array of listings
+      } catch (parseError) {
+        console.error(
+          `[Proxy Scrape] Error parsing JSON from Python script: ${parseError.message}`
+        );
+        res.status(500).json({
+          error: "Failed to parse scraper output.",
+          details: parseError.message,
+          rawOutput: stdoutData.substring(0, 1000), // Send beginning of raw output for debugging
+          stderr: stderrData.trim(),
+        });
+      }
+    });
+  } catch (error) {
+    console.error(
+      `[Proxy Scrape] Error spawning Python script: ${error.message}`
+    );
+    res.status(500).json({
+      error: "Internal server error while trying to run scraper.",
+      details: error.message,
+    });
   }
 });
 
@@ -286,11 +411,9 @@ app.get("/api/demographics", async (req, res) => {
   // 1. Get Geography Codes (LSOA, LAD)
   const geoCodes = await getGeographyCodesForPostcode(postcode);
   if (!geoCodes) {
-    return res
-      .status(404)
-      .json({
-        error: `Could not find geographic codes (LSOA/LAD) for postcode ${postcode}.`,
-      });
+    return res.status(404).json({
+      error: `Could not find geographic codes (LSOA/LAD) for postcode ${postcode}.`,
+    });
   }
 
   const geographyParam = `${geoCodes.lsoa_gss},${geoCodes.lad_gss}`;
