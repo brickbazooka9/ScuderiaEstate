@@ -162,6 +162,9 @@ const PropertyDetailModal = ({
               <Marker position={position}>
                 <Popup>{property.title}</Popup>
               </Marker>
+
+
+              
             </MapContainer>
           </div>
 
